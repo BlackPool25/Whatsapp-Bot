@@ -41,18 +41,31 @@ FILE_TYPE_MAPPINGS = {
 }
 
 # Bot Messages
-WELCOME_MESSAGE = """👋 Hey there! Welcome to Deepfake Detector!
+WELCOME_MESSAGE = """👋 Hey there! Welcome to *Deepfake Detector Bot*!
 
-I can help you detect deepfakes in images and videos. Just send me:
-📸 A photo
-🎥 A video
-📄 A document
+I can help you detect deepfakes and AI-generated content. 
 
-And I'll analyze it for you!"""
+*Please choose what you'd like to analyze:*
 
-HELP_MESSAGE = """💡 To detect deepfakes, please send an image, video, or document file.
+1️⃣ Send *1* for Image Analysis 🖼
+2️⃣ Send *2* for Video Analysis 🎥
+3️⃣ Send *3* for Text Analysis 📝
 
-Supported formats:
-• Images: JPG, PNG, GIF, WebP
-• Videos: MP4, MOV, AVI, MKV, WebM
-• Documents: PDF, DOC, DOCX, TXT, CSV"""
+Just reply with the number of your choice!"""
+
+HELP_MESSAGE = """💡 *How to use this bot:*
+
+*Step 1:* Choose your analysis type
+• Send *1* for Image
+• Send *2* for Video  
+• Send *3* for Text
+
+*Step 2:* Send your content
+• After choosing, send the image/video/text you want analyzed
+
+*Supported formats:*
+📸 Images: JPG, PNG, GIF, WebP
+🎥 Videos: MP4, MOV, AVI, MKV, WebM
+📝 Text: Any text message
+
+Type *start* or *hi* to begin again!"""

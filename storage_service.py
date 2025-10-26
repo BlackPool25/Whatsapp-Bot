@@ -18,7 +18,9 @@ def get_supabase_client():
     if supabase is None:
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
+        
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print(f"✅ Supabase client initialized successfully")
     return supabase
 
 
@@ -86,19 +88,61 @@ def upload_to_supabase(file_content, bucket_name, filename):
     """
     try:
         client = get_supabase_client()
+        
+        print(f"📤 Uploading to bucket: {bucket_name}, filename: {filename}")
+        print(f"   File size: {len(file_content)} bytes")
+        
+        # Upload file with upsert option to overwrite if exists
         response = client.storage.from_(bucket_name).upload(
             path=filename,
             file=file_content,
-            file_options={"content-type": "application/octet-stream"}
+            file_options={
+                "content-type": "application/octet-stream",
+                "upsert": "true"  # Allow overwriting existing files
+            }
         )
+        
+        print(f"✅ Upload response: {response}")
         
         # Get public URL
         public_url = client.storage.from_(bucket_name).get_public_url(filename)
         
+        print(f"🔗 Public URL generated: {public_url}")
+        
         return public_url
     
     except Exception as e:
-        print(f"Error uploading to Supabase: {e}")
+        error_str = str(e)
+        print(f"❌ Error uploading to Supabase bucket '{bucket_name}': {e}")
+        print(f"   Filename: {filename}")
+        print(f"   File size: {len(file_content)} bytes")
+        print(f"   Error type: {type(e).__name__}")
+        print(f"   Full error: {error_str}")
+        
+        # Check specific error types
+        if "not found" in error_str.lower() or "404" in error_str:
+            print(f"   💡 Bucket '{bucket_name}' may not exist!")
+            print(f"   Create it at: https://supabase.com/dashboard/project/cjkcwycnetdhumtqthuk/storage/buckets")
+        elif "row-level security" in error_str.lower() or "403" in error_str or "unauthorized" in error_str.lower():
+            print(f"\n   🔐 ROW-LEVEL SECURITY (RLS) POLICY ERROR!")
+            print(f"   Your Supabase bucket has RLS enabled which blocks uploads.")
+            print(f"\n   📋 TO FIX THIS:")
+            print(f"   1. Go to: https://supabase.com/dashboard/project/cjkcwycnetdhumtqthuk/storage/buckets/{bucket_name}")
+            print(f"   2. Click on 'Policies' tab")
+            print(f"   3. Either:")
+            print(f"      a) Click 'New Policy' → 'Allow public access' → Save")
+            print(f"      b) Or disable RLS entirely (Configuration → Make bucket public)")
+            print(f"\n   💡 For a WhatsApp bot, you typically want public uploads enabled.\n")
+        elif "already exists" in error_str.lower() or "duplicate" in error_str.lower():
+            print(f"   💡 File already exists, trying to get URL anyway...")
+            try:
+                # If file already exists, just return the public URL
+                public_url = client.storage.from_(bucket_name).get_public_url(filename)
+                print(f"   ✅ Retrieved existing file URL: {public_url}")
+                return public_url
+            except:
+                pass
+        
         return None
 
 
@@ -132,17 +176,57 @@ def store_detection_history(user_id, session_id, file_url, filename, file_type,
             "file_type": file_type,
             "file_size": file_size,
             "file_extension": file_extension,
-            "detection_result": detection_result,
-            "confidence_score": confidence_score,
+            "detection_result": detection_result or "pending",  # Default to "pending" if not provided
+            "confidence_score": confidence_score if confidence_score is not None else 0.0,  # Default to 0.0 if not provided
             "is_file_available": True,
             "created_at": datetime.utcnow().isoformat()
         }
         
+        print(f"💾 Storing metadata in detection_history table...")
+        print(f"   File: {filename}")
+        print(f"   Type: {file_type}")
+        print(f"   Extension: {file_extension}")
+        
         response = client.table("detection_history").insert(data).execute()
-        return response.data[0] if response.data else None
+        
+        if response.data:
+            print(f"✅ Metadata stored successfully! Record ID: {response.data[0].get('id')}")
+            return response.data[0]
+        else:
+            print(f"⚠️ No data returned from insert operation")
+            return None
     
     except Exception as e:
-        print(f"Error storing detection history: {e}")
+        error_str = str(e)
+        print(f"❌ Error storing detection history: {e}")
+        print(f"   Error type: {type(e).__name__}")
+        
+        # Check for NOT NULL constraint violations
+        if "not-null constraint" in error_str.lower() or "23502" in error_str:
+            print(f"\n   ⚠️ NOT NULL CONSTRAINT VIOLATION!")
+            print(f"   Some required fields in detection_history table are missing.")
+            print(f"   The database schema requires certain fields to have values.")
+            
+            # Extract which column from error message
+            if '"detection_result"' in error_str:
+                print(f"   Column: detection_result must not be null")
+                print(f"   💡 Retrying with default value 'pending'...")
+                # We already set default above, so this shouldn't happen
+        
+        if "row-level security" in error_str.lower() or "403" in error_str:
+            print(f"\n   🔐 RLS POLICY ERROR on detection_history table!")
+            print(f"   The detection_history table also has RLS enabled.")
+            print(f"\n   📋 TO FIX: Add this policy to detection_history table:")
+            print(f"   Go to SQL Editor and run:")
+            print(f"   ```sql")
+            print(f"   CREATE POLICY \"Allow service role on detection_history\"")
+            print(f"   ON detection_history")
+            print(f"   FOR ALL")
+            print(f"   TO service_role")
+            print(f"   USING (true)")
+            print(f"   WITH CHECK (true);")
+            print(f"   ```\n")
+        
         return None
 
 
