@@ -84,29 +84,29 @@ def handle_media_message(message, from_number, user_id=None):
             send_whatsapp_message(from_number, WELCOME_MESSAGE)
             user_greeted[from_number] = True
             user_state[from_number] = None
-            return False, "Please choose an option first (1 for Image, 2 for Video, 3 for Text)"
+            # Don't return False - allow direct uploads
         
         # Determine message type
         msg_type = message.get("type")
         
-        # Check if user has selected the correct option
+        # Auto-set user state based on what they upload (if not set)
         expected_state = user_state.get(from_number)
         
         if expected_state is None:
-            return False, "Please choose an option first:\n\n1️⃣ Send *1* for Image Analysis\n2️⃣ Send *2* for Video Analysis\n3️⃣ Send *3* for Text Analysis"
-        
-        # Validate that the media type matches the user's choice
-        if msg_type == "image" and expected_state != 'image':
-            return False, f"⚠️ You selected option '{expected_state}' but sent an image.\n\nPlease send the correct type of content, or type 'start' to choose again."
-        elif msg_type == "video" and expected_state != 'video':
-            return False, f"⚠️ You selected option '{expected_state}' but sent a video.\n\nPlease send the correct type of content, or type 'start' to choose again."
-        elif msg_type == "document":
-            # For documents, we need to check the mime type
-            mime_type = message.get("document", {}).get("mime_type", "")
-            if expected_state == 'image' and not mime_type.startswith('image/'):
-                return False, f"⚠️ You selected 'image' but sent a document.\n\nPlease send an image file, or type 'start' to choose again."
-            elif expected_state == 'video' and not mime_type.startswith('video/'):
-                return False, f"⚠️ You selected 'video' but sent a document.\n\nPlease send a video file, or type 'start' to choose again."
+            # Automatically determine the type from the upload
+            if msg_type == "image":
+                user_state[from_number] = 'image'
+            elif msg_type == "video":
+                user_state[from_number] = 'video'
+            elif msg_type == "document":
+                # Check mime type to determine if it's image or video
+                mime_type = message.get("document", {}).get("mime_type", "")
+                if mime_type.startswith('image/'):
+                    user_state[from_number] = 'image'
+                elif mime_type.startswith('video/'):
+                    user_state[from_number] = 'video'
+                else:
+                    return False, "Please choose an option first:\n\n1️⃣ Send *1* for Image Analysis\n2️⃣ Send *2* for Video Analysis\n3️⃣ Send *3* for Text Analysis"
         
         # Extract media information based on type
         media_id = None
