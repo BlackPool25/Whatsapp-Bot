@@ -16,6 +16,10 @@ PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+# Modal AI Configuration
+MODAL_API_URL = os.getenv("MODAL_API_URL", "https://blackpool25--ai-vs-real-detector-fastapi-app.modal.run")
+MODAL_API_KEY = os.getenv("MODAL_API_KEY")  # Optional, for secured endpoints
+
 # Flask Configuration
 MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
 

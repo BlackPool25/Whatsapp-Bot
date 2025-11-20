@@ -10,6 +10,7 @@ from storage_service import (
     upload_to_supabase,
     store_detection_history
 )
+from modal_service import detect_image_ai, format_detection_response, ModalDetectionError
 from config import WELCOME_MESSAGE, HELP_MESSAGE
 
 
@@ -165,8 +166,39 @@ def handle_media_message(message, from_number, user_id=None):
         if not file_url:
             return False, "Failed to upload file to storage"
         
-        # Store metadata in database
+        # Store metadata in database (initially with pending status)
         file_size = len(file_content)
+        
+        # Run AI detection for images
+        detection_result = None
+        confidence_score = None
+        detection_result_json = None
+        
+        if file_type == 'image':
+            try:
+                print(f"🤖 Running AI detection on image...")
+                detection_result = detect_image_ai(file_content, mime_type)
+                confidence_score = detection_result.get("confidence", 0)
+                
+                # Format for database storage (JSON string)
+                detection_result_json = {
+                    "confidence": detection_result.get("confidence"),
+                    "isAI": detection_result.get("isAI"),
+                    "label": detection_result.get("label"),
+                    "model": detection_result.get("model")
+                }
+                
+                print(f"✅ AI detection complete: {detection_result.get('label')} ({confidence_score}%)")
+            except ModalDetectionError as e:
+                print(f"⚠️ Modal AI detection failed: {e}")
+                # Continue without detection result - will show as pending
+                detection_result_json = {"error": str(e), "status": "failed"}
+            except Exception as e:
+                print(f"⚠️ Unexpected error in AI detection: {e}")
+                detection_result_json = {"error": "Unexpected error", "status": "failed"}
+        
+        # Store in database with detection results
+        import json
         detection_record = store_detection_history(
             user_id=user_id,
             session_id=session_id,
@@ -174,7 +206,9 @@ def handle_media_message(message, from_number, user_id=None):
             filename=unique_filename,
             file_type=file_type,
             file_size=file_size,
-            file_extension=extension or 'unknown'
+            file_extension=extension or 'unknown',
+            detection_result=json.dumps(detection_result_json) if detection_result_json else None,
+            confidence_score=confidence_score if confidence_score is not None else 0.0
         )
         
         if not detection_record:
@@ -190,7 +224,8 @@ def handle_media_message(message, from_number, user_id=None):
             "bucket": bucket_name,
             "size": file_size,
             "record_id": detection_record.get("id"),
-            "msg_type": msg_type
+            "msg_type": msg_type,
+            "detection_result": detection_result  # Include AI detection result
         }
     
     except Exception as e:
@@ -204,11 +239,19 @@ def format_media_response(msg_type, result):
     
     Args:
         msg_type (str): Message type (image, video, document)
-        result (dict): Upload result
+        result (dict): Upload result including detection_result for images
     
     Returns:
         str: Formatted response message
     """
+    # Check if we have AI detection results (for images)
+    detection_result = result.get("detection_result")
+    
+    if detection_result and msg_type == "image":
+        # Use the Modal AI detection formatted response
+        return format_detection_response(detection_result, result['filename'])
+    
+    # For videos/documents or if detection failed, use basic response
     emoji_map = {
         "image": "🖼",
         "video": "🎥",
@@ -221,10 +264,18 @@ def format_media_response(msg_type, result):
     response = f"{emoji} {type_name} uploaded successfully!\n\n"
     response += f"📁 File: {result['filename']}\n"
     response += f"📊 Type: {result['file_type']}\n"
-    response += f"💾 Size: {result['size']:,} bytes\n"
-    response += f"🔗 Bucket: {result['bucket']}\n\n"
-    response += "🔍 Analyzing for deepfakes...\n"
-    response += "⏳ This may take a moment..."
+    response += f"💾 Size: {result['size']:,} bytes\n\n"
+    
+    # For non-images, mention that AI detection is coming
+    if msg_type in ["video", "document"]:
+        response += "📝 File saved to database.\n"
+        response += "🔜 AI detection for videos/documents coming soon!\n\n"
+    else:
+        # Image but detection failed
+        response += "⚠️ AI detection unavailable at the moment.\n"
+        response += "📝 File saved successfully.\n\n"
+    
+    response += "💡 Type *start* to analyze another file!"
     
     return response
 
@@ -249,14 +300,23 @@ def process_whatsapp_message(message, from_number):
     
     # Handle media messages (image, video, document)
     elif msg_type in ["image", "video", "document"]:
-        success, result = handle_media_message(message, from_number)
-        
-        if success:
-            return format_media_response(msg_type, result)
-        else:
-            error_msg = f"❌ Error processing {msg_type}: {result}\n\n"
-            error_msg += "Please try again or contact support if the issue persists."
-            return error_msg
+        try:
+            success, result = handle_media_message(message, from_number)
+            
+            if success:
+                response = format_media_response(msg_type, result)
+                print(f"✅ Successfully processed {msg_type} for {from_number}")
+                return response
+            else:
+                error_msg = f"❌ Error processing {msg_type}: {result}\n\n"
+                error_msg += "Please try again or contact support if the issue persists."
+                print(f"❌ Failed to process {msg_type}: {result}")
+                return error_msg
+        except Exception as e:
+            print(f"❌ Exception in media message processing: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"❌ Error processing {msg_type}. Please try again."
     
     # Handle unsupported message types
     else:

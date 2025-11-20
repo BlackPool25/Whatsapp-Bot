@@ -19,8 +19,17 @@ def get_supabase_client():
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
         
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        print(f"✅ Supabase client initialized successfully")
+        try:
+            # Try with just URL and KEY (newer supabase-py versions)
+            supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+            print(f"✅ Supabase client initialized successfully")
+        except TypeError as e:
+            # Fallback for version compatibility issues
+            print(f"⚠️ Supabase client initialization warning: {e}")
+            print(f"   Retrying with basic parameters...")
+            from supabase import Client as SupabaseClient
+            supabase = SupabaseClient(SUPABASE_URL, SUPABASE_KEY)
+            print(f"✅ Supabase client initialized with fallback method")
     return supabase
 
 
@@ -160,14 +169,24 @@ def store_detection_history(user_id, session_id, file_url, filename, file_type,
         file_type (str): File type category (image, video, document)
         file_size (int): File size in bytes
         file_extension (str): File extension
-        detection_result (str, optional): Detection result
-        confidence_score (float, optional): Confidence score
+        detection_result (str or dict, optional): Detection result (JSON string or dict)
+        confidence_score (float, optional): Confidence score (0-100)
     
     Returns:
         dict: Detection record or None on error
     """
     try:
         client = get_supabase_client()
+        
+        # Handle detection_result - can be string, dict, or None
+        if detection_result is None:
+            detection_result_str = '{"status": "pending"}'
+        elif isinstance(detection_result, dict):
+            import json
+            detection_result_str = json.dumps(detection_result)
+        else:
+            detection_result_str = detection_result
+        
         data = {
             "user_id": user_id,
             "session_id": session_id,
@@ -176,9 +195,10 @@ def store_detection_history(user_id, session_id, file_url, filename, file_type,
             "file_type": file_type,
             "file_size": file_size,
             "file_extension": file_extension,
-            "detection_result": detection_result or "pending",  # Default to "pending" if not provided
-            "confidence_score": confidence_score if confidence_score is not None else 0.0,  # Default to 0.0 if not provided
+            "detection_result": detection_result_str,
+            "confidence_score": confidence_score if confidence_score is not None else 0.0,
             "is_file_available": True,
+            "model_used": "EfficientFormer-S2V1 (Modal)" if detection_result else "Pending",
             "created_at": datetime.utcnow().isoformat()
         }
         
