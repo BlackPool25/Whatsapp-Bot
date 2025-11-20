@@ -57,9 +57,13 @@ def detect_image_ai(file_content: bytes, mime_type: str = "image/jpeg") -> Dict:
         
         print(f"🤖 Calling Modal API: {url}")
         print(f"   Image size: {len(file_content)} bytes")
+        print(f"   Base64 length: {len(base64_image)} chars")
+        print(f"   Payload keys: {list(payload.keys())}")
         
         # Call Modal API
+        print(f"   Making POST request...")
         response = requests.post(url, headers=headers, json=payload, timeout=30)
+        print(f"   Response status: {response.status_code}")
         
         if response.status_code != 200:
             error_msg = f"Modal API returned status {response.status_code}"

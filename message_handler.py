@@ -2,6 +2,7 @@
 Message Handler - Processes different types of WhatsApp messages
 """
 import time
+import os
 from whatsapp_service import send_whatsapp_message, download_whatsapp_media
 from storage_service import (
     get_file_extension, 
@@ -174,9 +175,12 @@ def handle_media_message(message, from_number, user_id=None):
         confidence_score = None
         detection_result_json = None
         
+        print(f"🔍 File type detected: '{file_type}' (checking if == 'image')")
+        
         if file_type == 'image':
             try:
                 print(f"🤖 Running AI detection on image...")
+                print(f"🔗 Modal API URL: {os.getenv('MODAL_API_URL', 'NOT SET')}")
                 detection_result = detect_image_ai(file_content, mime_type)
                 confidence_score = detection_result.get("confidence", 0)
                 
@@ -191,11 +195,17 @@ def handle_media_message(message, from_number, user_id=None):
                 print(f"✅ AI detection complete: {detection_result.get('label')} ({confidence_score}%)")
             except ModalDetectionError as e:
                 print(f"⚠️ Modal AI detection failed: {e}")
+                import traceback
+                traceback.print_exc()
                 # Continue without detection result - will show as pending
                 detection_result_json = {"error": str(e), "status": "failed"}
+                detection_result = None  # Ensure it's None so fallback message is used
             except Exception as e:
                 print(f"⚠️ Unexpected error in AI detection: {e}")
+                import traceback
+                traceback.print_exc()
                 detection_result_json = {"error": "Unexpected error", "status": "failed"}
+                detection_result = None  # Ensure it's None so fallback message is used
         
         # Store in database with detection results
         import json
