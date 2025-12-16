@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS detection_history (
     file_extension TEXT NOT NULL,
     detection_result TEXT,  -- Result of deepfake detection (e.g., 'authentic', 'fake', 'uncertain')
     confidence_score DECIMAL(5,2),  -- Confidence score (0.00 to 100.00)
+    detector_scores JSONB DEFAULT '{}'::jsonb,  -- Individual detector scores (visual, audio, temporal, face_quality)
+    model_metadata JSONB DEFAULT '{}'::jsonb,  -- Model information (models_used, processing_time, etc.)
     is_file_available BOOLEAN DEFAULT TRUE,
     file_deleted_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -30,6 +32,12 @@ CREATE INDEX IF NOT EXISTS idx_detection_history_created_at ON detection_history
 
 -- Create index on is_file_available for filtering
 CREATE INDEX IF NOT EXISTS idx_detection_history_is_file_available ON detection_history(is_file_available);
+
+-- Create index for querying by detector scores (GIN index for JSONB)
+CREATE INDEX IF NOT EXISTS idx_detection_history_detector_scores ON detection_history USING GIN (detector_scores);
+
+-- Create index for model metadata queries
+CREATE INDEX IF NOT EXISTS idx_detection_history_model_metadata ON detection_history USING GIN (model_metadata);
 
 -- Create updated_at trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()

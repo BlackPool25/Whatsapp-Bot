@@ -2,14 +2,17 @@
 Message Handler - Processes different types of WhatsApp messages
 """
 import time
+import os
 from whatsapp_service import send_whatsapp_message, download_whatsapp_media
 from storage_service import (
     get_file_extension, 
     determine_file_type_and_bucket,
     generate_unique_filename,
     upload_to_supabase,
-    store_detection_history
+    store_detection_history,
+    get_supabase_client
 )
+from modal_service import detect_video_multimodal
 from config import WELCOME_MESSAGE, HELP_MESSAGE
 
 
@@ -180,6 +183,37 @@ def handle_media_message(message, from_number, user_id=None):
         if not detection_record:
             return False, "Failed to store file metadata"
         
+        record_id = detection_record.get("id")
+        
+        # Trigger Modal video detection for videos
+        if file_type == 'video':
+            try:
+                print(f"🎥 Triggering multimodal video detection for {unique_filename}...")
+                
+                # Get callback URL (your Flask app's callback endpoint)
+                base_url = os.getenv('FLASK_BASE_URL', 'http://localhost:5000')
+                callback_url = f"{base_url}/api/detection_callback"
+                
+                # Call Modal API to start detection
+                modal_response = detect_video_multimodal(
+                    video_url=file_url,
+                    callback_url=callback_url,
+                    task_id=record_id
+                )
+                
+                print(f"✅ Video detection task started: {modal_response}")
+                
+                # Update detection record status to "processing"
+                supabase = get_supabase_client()
+                supabase.table("detection_history").update({
+                    "detection_result": "processing"
+                }).eq("id", record_id).execute()
+                
+            except Exception as e:
+                print(f"⚠️ Failed to trigger video detection: {e}")
+                # Don't fail the upload, just mark as pending
+                pass
+        
         # Reset user state after successful upload
         user_state[from_number] = None
         
@@ -189,7 +223,7 @@ def handle_media_message(message, from_number, user_id=None):
             "file_type": file_type,
             "bucket": bucket_name,
             "size": file_size,
-            "record_id": detection_record.get("id"),
+            "record_id": record_id,
             "msg_type": msg_type
         }
     

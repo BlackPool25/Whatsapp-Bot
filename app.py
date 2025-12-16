@@ -203,6 +203,53 @@ def api_create_session():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/detection_callback", methods=["POST"])
+def detection_callback():
+    """
+    Webhook endpoint to receive detection results from Modal
+    Updates database with multimodal detection scores
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+        
+        task_id = data.get("task_id")
+        result = data.get("result")
+        
+        if not task_id or not result:
+            return jsonify({"error": "Missing task_id or result"}), 400
+        
+        print(f"📥 Received detection callback for task: {task_id}")
+        print(f"   Verdict: {result.get('verdict')}")
+        
+        # Update detection_history with results
+        supabase = get_supabase_client()
+        
+        update_data = {
+            "detection_result": result.get("verdict"),
+            "confidence_score": result.get("confidence_percent"),
+            "detector_scores": result.get("breakdown", {}),
+            "model_metadata": result.get("model_metadata", {})
+        }
+        
+        response = supabase.table("detection_history").update(update_data).eq("id", task_id).execute()
+        
+        print(f"✅ Database updated for task {task_id}")
+        
+        # TODO: Optionally send WhatsApp notification to user about completion
+        # This would require storing the user's phone number in detection_history
+        
+        return jsonify({"success": True, "message": "Detection results stored"}), 200
+    
+    except Exception as e:
+        print(f"❌ Error in detection_callback: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/health", methods=["GET"])
 def health_check():
     """Health check endpoint"""
