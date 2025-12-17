@@ -12,7 +12,7 @@ from storage_service import (
     store_detection_history,
     get_supabase_client
 )
-from modal_service import detect_video_multimodal
+from modal_service import detect_video_multimodal, detect_image_ai, detect_text_ai, ModalDetectionError
 from config import WELCOME_MESSAGE, HELP_MESSAGE
 
 
@@ -244,6 +244,57 @@ def handle_media_message(message, from_number, user_id=None):
                 except:
                     pass
         
+        # Trigger Modal image detection for images
+        elif file_type == 'image':
+            try:
+                print(f"🖼️ Triggering AI image detection for {unique_filename}...")
+                
+                # Call Modal API to detect
+                modal_response = detect_image_ai(
+                    file_content=file_content,
+                    mime_type=mime_type
+                )
+                
+                print(f"✅ Image detection complete: {modal_response.get('top_prediction')}")
+                
+                # Map response to our format
+                top_pred = modal_response.get('top_prediction', '').upper()
+                is_fake = 'AI' in top_pred or 'FAKE' in top_pred
+                confidence = modal_response.get('confidence', 0.5)
+                
+                # Update detection record
+                supabase = get_supabase_client()
+                supabase.table("detection_history").update({
+                    "detection_result": "FAKE" if is_fake else "REAL",
+                    "confidence_score": int(confidence * 100),
+                    "detector_scores": {
+                        "predictions": modal_response.get('predictions', []),
+                        "top_prediction": modal_response.get('top_prediction')
+                    },
+                    "model_metadata": {
+                        "model": "EfficientFormer-S2V1-Image-Detector"
+                    }
+                }).eq("id", record_id).execute()
+                
+                # Store result for response formatting
+                result["detection"] = {
+                    "final_verdict": "FAKE" if is_fake else "REAL",
+                    "confidence": confidence,
+                    "top_prediction": modal_response.get('top_prediction')
+                }
+                
+            except ModalDetectionError as e:
+                print(f"⚠️ Failed to trigger image detection: {e}")
+                # Mark as error
+                try:
+                    supabase = get_supabase_client()
+                    supabase.table("detection_history").update({
+                        "detection_result": "error",
+                        "model_metadata": {"error": str(e)}
+                    }).eq("id", record_id).execute()
+                except:
+                    pass
+        
         # Reset user state after successful upload
         user_state[from_number] = None
         
@@ -287,50 +338,72 @@ def format_media_response(msg_type, result):
     response += f"📊 Type: {result['file_type']}\n"
     response += f"💾 Size: {result['size']:,} bytes\n\n"
     
-    # Add detection results if available (for videos)
+    # Add detection results if available
     detection = result.get('detection')
     if detection and not detection.get('error'):
-        verdict = detection.get('final_verdict', 'UNKNOWN')
-        confidence = detection.get('confidence', 0)
-        
-        # Verdict with emoji
-        if verdict == 'FAKE':
-            response += "🚨 *DEEPFAKE DETECTED*\n"
-            response += f"⚠️ Confidence: {confidence:.1%}\n\n"
-        else:
-            response += "✅ *AUTHENTIC VIDEO*\n"
-            response += f"✓ Confidence: {confidence:.1%}\n\n"
-        
-        # Layer breakdown
-        response += "📊 *Analysis Breakdown:*\n"
-        for lr in detection.get('layer_results', []):
-            layer_name = lr.get('layer_name', 'Unknown')
-            layer_verdict = 'FAKE' if lr.get('is_fake') else 'REAL'
-            layer_conf = lr.get('confidence', 0)
-            layer_time = lr.get('processing_time', 0)
+        # Handle video detection results (3-layer pipeline)
+        if msg_type == "video":
+            verdict = detection.get('final_verdict', 'UNKNOWN')
+            confidence = detection.get('confidence', 0)
             
-            # Simple layer names
-            if 'Visual' in layer_name:
-                icon = "👁️"
-                name = "Visual Check"
-            elif 'Temporal' in layer_name:
-                icon = "⏱️"
-                name = "Temporal Check"
-            elif 'Audio' in layer_name:
-                icon = "🔊"
-                name = "Audio Check"
+            # Verdict with emoji
+            if verdict == 'FAKE':
+                response += "🚨 *DEEPFAKE DETECTED*\n"
+                response += f"⚠️ Confidence: {confidence:.1%}\n\n"
             else:
-                icon = "🔍"
-                name = layer_name
+                response += "✅ *AUTHENTIC VIDEO*\n"
+                response += f"✓ Confidence: {confidence:.1%}\n\n"
             
-            response += f"{icon} {name}: {layer_verdict} ({layer_conf:.0%}) [{layer_time:.1f}s]\n"
+            # Layer breakdown
+            response += "📊 *Analysis Breakdown:*\n"
+            for lr in detection.get('layer_results', []):
+                layer_name = lr.get('layer_name', 'Unknown')
+                layer_verdict = 'FAKE' if lr.get('is_fake') else 'REAL'
+                layer_conf = lr.get('confidence', 0)
+                layer_time = lr.get('processing_time', 0)
+                
+                # Simple layer names
+                if 'Visual' in layer_name:
+                    icon = "👁️"
+                    name = "Visual Check"
+                elif 'Temporal' in layer_name:
+                    icon = "⏱️"
+                    name = "Temporal Check"
+                elif 'Audio' in layer_name:
+                    icon = "🔊"
+                    name = "Audio Check"
+                else:
+                    icon = "🔍"
+                    name = layer_name
+                
+                response += f"{icon} {name}: {layer_verdict} ({layer_conf:.0%}) [{layer_time:.1f}s]\n"
+            
+            total_time = detection.get('total_time', 0)
+            response += f"\n⏱️ Total Analysis: {total_time:.2f}s\n"
+            response += f"🤖 Model: Balanced-3Layer-Pipeline-v1"
         
-        total_time = detection.get('total_time', 0)
-        response += f"\n⏱️ Total Analysis: {total_time:.2f}s\n"
-        response += f"🤖 Model: Balanced-3Layer-Pipeline-v1"
+        # Handle image detection results (EfficientFormer)
+        elif msg_type == "image":
+            top_pred = detection.get('top_prediction', 'UNKNOWN')
+            confidence = detection.get('confidence', 0)
+            is_ai = detection.get('is_ai_generated', False)
+            
+            # Verdict with emoji
+            if is_ai:
+                response += "🤖 *AI-GENERATED IMAGE*\n"
+                response += f"⚠️ Confidence: {confidence:.1%}\n\n"
+            else:
+                response += "✅ *REAL PHOTOGRAPH*\n"
+                response += f"✓ Confidence: {confidence:.1%}\n\n"
+            
+            response += f"📊 Classification: {top_pred}\n"
+            response += f"🤖 Model: EfficientFormer-L1"
         
-    elif msg_type == "video":
+    elif msg_type == "video" and not detection:
         response += "🔍 Analyzing for deepfakes...\n"
+        response += "⏳ This may take a moment..."
+    elif msg_type == "image" and not detection:
+        response += "🔍 Analyzing for AI generation...\n"
         response += "⏳ This may take a moment..."
     
     return response

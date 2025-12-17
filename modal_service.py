@@ -8,6 +8,8 @@ from typing import Dict, Optional
 # Modal API Configuration - Balanced 3-Layer Detection Pipeline
 # Deployed: https://modal.com/apps/blackpool25/main/deployed/deepfake-detector-balanced-3layer
 MODAL_VIDEO_API_URL = os.getenv("MODAL_VIDEO_API_URL", "https://blackpool25--deepfake-detector-balanced-3layer-detect-video.modal.run")
+MODAL_IMAGE_API_URL = os.getenv("MODAL_IMAGE_API_URL", "https://blackpool25--ai-vs-real-detector-fastapi-app.modal.run")
+MODAL_TEXT_API_URL = os.getenv("MODAL_TEXT_API_URL", "https://your-text-detector.modal.run")  # Update when deployed
 MODAL_API_KEY = os.getenv("MODAL_API_KEY")  # Optional
 
 
@@ -54,23 +56,24 @@ def detect_video_multimodal(
         ModalDetectionError: If API call fails
     """
     try:
-        # Direct endpoint (not /detect-video suffix)
+        # Modal FastAPI endpoint expects query parameters for simple types
         endpoint = MODAL_VIDEO_API_URL
         
-        payload = {
+        params = {
             "video_url": video_url,
             "enable_fail_fast": enable_fail_fast
         }
         
-        headers = {"Content-Type": "application/json"}
+        headers = {}
         if MODAL_API_KEY:
             headers["Authorization"] = f"Bearer {MODAL_API_KEY}"
         
-        print(f"[Modal Service] Calling {endpoint} with video: {video_url}")
+        print(f"[Modal Service] Calling {endpoint}")
+        print(f"[Modal Service] Video URL: {video_url}")
         
         response = requests.post(
             endpoint,
-            json=payload,
+            params=params,  # Use params, not json for FastAPI function parameters
             headers=headers,
             timeout=120  # Increased timeout for video processing
         )
@@ -122,23 +125,65 @@ def check_detection_status(task_id: str) -> Dict:
         raise ModalDetectionError(f"Failed to check status: {str(e)}")
 
 
-# Keep the old image detection function for backward compatibility
+# Image and Text detection functions
 def detect_image_ai(file_content: bytes, mime_type: str = "image/jpeg") -> Dict:
     """
-    Legacy image detection function (uses old Modal endpoint)
-    For images only - videos should use detect_video_multimodal
-    """
-    old_modal_url = os.getenv("MODAL_API_URL", "https://blackpool25--ai-vs-real-detector-fastapi-app.modal.run")
+    Detect AI-generated images using Modal endpoint
     
+    Args:
+        file_content: Image file bytes
+        mime_type: MIME type of image
+    
+    Returns:
+        dict: Detection result with confidence, isAI, label, model
+    """
     try:
-        url = f"{old_modal_url}/predict"
+        url = f"{MODAL_IMAGE_API_URL}/predict"
         files = {"file": ("image.jpg", file_content, mime_type)}
         
-        response = requests.post(url, files=files, timeout=60)
+        headers = {}
+        if MODAL_API_KEY:
+            headers["Authorization"] = f"Bearer {MODAL_API_KEY}"
+        
+        print(f"[Modal Service] Detecting image at {url}")
+        response = requests.post(url, files=files, headers=headers, timeout=60)
         response.raise_for_status()
         
-        return response.json()
+        result = response.json()
+        print(f"[Modal Service] Image detection complete: {result.get('top_prediction')}")
+        return result
     
     except requests.exceptions.RequestException as e:
         print(f"Image detection error: {e}")
         raise ModalDetectionError(f"Image detection failed: {str(e)}")
+
+
+def detect_text_ai(text: str) -> Dict:
+    """
+    Detect AI-generated text using Modal endpoint
+    
+    Args:
+        text: Text content to analyze
+    
+    Returns:
+        dict: Detection result with confidence, isAI, label, model
+    """
+    try:
+        url = f"{MODAL_TEXT_API_URL}/predict"
+        
+        params = {"text": text}
+        headers = {}
+        if MODAL_API_KEY:
+            headers["Authorization"] = f"Bearer {MODAL_API_KEY}"
+        
+        print(f"[Modal Service] Detecting text at {url}")
+        response = requests.post(url, params=params, headers=headers, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        print(f"[Modal Service] Text detection complete")
+        return result
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Text detection error: {e}")
+        raise ModalDetectionError(f"Text detection failed: {str(e)}")
