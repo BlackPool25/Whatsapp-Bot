@@ -5,11 +5,13 @@ import os
 import requests
 from typing import Dict, Optional
 
-# Modal API Configuration - Balanced 3-Layer Detection Pipeline
-# Deployed: https://modal.com/apps/blackpool25/main/deployed/deepfake-detector-balanced-3layer
+# Modal API Configuration - Multimodal Detection
+# Video: https://modal.com/apps/blackpool25/main/deployed/deepfake-detector-balanced-3layer
+# Image: https://modal.com/apps/blackpool25/main/deployed/ai-vs-real-detector
+# Text: https://modal.com/apps/blackpool25/main/deployed/ai-text-detector
 MODAL_VIDEO_API_URL = os.getenv("MODAL_VIDEO_API_URL", "https://blackpool25--deepfake-detector-balanced-3layer-detect-video.modal.run")
 MODAL_IMAGE_API_URL = os.getenv("MODAL_IMAGE_API_URL", "https://blackpool25--ai-vs-real-detector-fastapi-app.modal.run")
-MODAL_TEXT_API_URL = os.getenv("MODAL_TEXT_API_URL", "https://your-text-detector.modal.run")  # Update when deployed
+MODAL_TEXT_API_URL = os.getenv("MODAL_TEXT_API_URL", "https://blackpool25--ai-text-detector-detect-endpoint.modal.run")
 MODAL_API_KEY = os.getenv("MODAL_API_KEY")  # Optional
 
 
