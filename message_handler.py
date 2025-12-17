@@ -61,7 +61,39 @@ def handle_text_message(from_number, text_body):
     elif user_state.get(from_number) == 'text':
         # User has chosen text option and is now sending text to analyze
         user_state[from_number] = None  # Reset state after processing
-        return f"✅ Text received for analysis:\n\n\"{text_body}\"\n\n🔍 Analyzing for AI-generated content...\n⏳ This may take a moment...\n\n{HELP_MESSAGE}"
+        
+        try:
+            # Detect AI-generated text
+            modal_response = detect_text_ai(text_body)
+            
+            if modal_response.get('success'):
+                result = modal_response['result']
+                prediction = result['prediction']  # "AI", "Human", or "UNCERTAIN"
+                confidence = result['confidence_percent']  # e.g., "85.0%"
+                is_ai = result['is_ai']
+                
+                # Format response
+                if is_ai:
+                    response = f"🤖 *AI-GENERATED TEXT DETECTED*\n"
+                    response += f"⚠️ Confidence: {confidence}\n\n"
+                elif prediction == "Human":
+                    response = f"✅ *AUTHENTIC HUMAN TEXT*\n"
+                    response += f"✓ Confidence: {confidence}\n\n"
+                else:
+                    response = f"❓ *UNCERTAIN*\n"
+                    response += f"ℹ️ Confidence: {confidence}\n\n"
+                
+                response += f"📊 Prediction: {prediction}\n"
+                response += f"🎯 Agreement: {result.get('agreement', 'N/A')}\n"
+                response += f"🤖 Model: Ensemble-AI-Detector-v3\n\n"
+                response += HELP_MESSAGE
+                
+                return response
+            else:
+                return f"❌ Text analysis failed\n\n{HELP_MESSAGE}"
+                
+        except ModalDetectionError as e:
+            return f"❌ Error analyzing text: {str(e)}\n\n{HELP_MESSAGE}"
     else:
         # User sent text but hasn't chosen an option
         return f"❓ I'm not sure what you'd like to do.\n\n{WELCOME_MESSAGE}"

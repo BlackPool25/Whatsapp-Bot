@@ -138,15 +138,23 @@ def detect_image_ai(file_content: bytes, mime_type: str = "image/jpeg") -> Dict:
         dict: Detection result with confidence, isAI, label, model
     """
     try:
-        url = f"{MODAL_IMAGE_API_URL}/predict"
-        files = {"file": ("image.jpg", file_content, mime_type)}
+        import base64
         
-        headers = {}
+        # Convert image bytes to base64
+        image_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        url = f"{MODAL_IMAGE_API_URL}/predict"
+        payload = {
+            "image": image_base64,
+            "return_all_scores": True
+        }
+        
+        headers = {"Content-Type": "application/json"}
         if MODAL_API_KEY:
             headers["Authorization"] = f"Bearer {MODAL_API_KEY}"
         
         print(f"[Modal Service] Detecting image at {url}")
-        response = requests.post(url, files=files, headers=headers, timeout=60)
+        response = requests.post(url, json=payload, headers=headers, timeout=60)
         response.raise_for_status()
         
         result = response.json()
@@ -169,19 +177,26 @@ def detect_text_ai(text: str) -> Dict:
         dict: Detection result with confidence, isAI, label, model
     """
     try:
-        url = f"{MODAL_TEXT_API_URL}/predict"
+        url = MODAL_TEXT_API_URL
         
-        params = {"text": text}
-        headers = {}
+        payload = {
+            "text": text,
+            "format": "web",
+            "include_breakdown": True,
+            "enable_provenance": False
+        }
+        
+        headers = {"Content-Type": "application/json"}
         if MODAL_API_KEY:
             headers["Authorization"] = f"Bearer {MODAL_API_KEY}"
         
         print(f"[Modal Service] Detecting text at {url}")
-        response = requests.post(url, params=params, headers=headers, timeout=30)
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         
         result = response.json()
-        print(f"[Modal Service] Text detection complete")
+        if result.get('success'):
+            print(f"[Modal Service] Text detection complete: {result['result']['prediction']}")
         return result
     
     except requests.exceptions.RequestException as e:
