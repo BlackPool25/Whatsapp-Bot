@@ -188,31 +188,61 @@ def handle_media_message(message, from_number, user_id=None):
         # Trigger Modal video detection for videos
         if file_type == 'video':
             try:
-                print(f"🎥 Triggering multimodal video detection for {unique_filename}...")
+                print(f"🎥 Triggering balanced 3-layer video detection for {unique_filename}...")
                 
-                # Get callback URL (your Flask app's callback endpoint)
-                base_url = os.getenv('FLASK_BASE_URL', 'http://localhost:5000')
-                callback_url = f"{base_url}/api/detection_callback"
-                
-                # Call Modal API to start detection
+                # Call Modal API to detect (synchronous with balanced pipeline)
                 modal_response = detect_video_multimodal(
                     video_url=file_url,
-                    callback_url=callback_url,
-                    task_id=record_id
+                    enable_fail_fast=False  # Get all 3 layers for comprehensive analysis
                 )
                 
-                print(f"✅ Video detection task started: {modal_response}")
+                print(f"✅ Video detection complete: {modal_response.get('final_verdict')}")
                 
-                # Update detection record status to "processing"
+                # Format detailed detection result
+                is_fake = modal_response.get('final_verdict') == 'FAKE'
+                confidence = modal_response.get('confidence', 0)
+                
+                # Update detection record with full results
                 supabase = get_supabase_client()
                 supabase.table("detection_history").update({
-                    "detection_result": "processing"
+                    "detection_result": modal_response.get('final_verdict'),
+                    "confidence_score": int(confidence * 100),  # Convert to percentage
+                    "detector_scores": {
+                        "layers": [
+                            {
+                                "name": lr.get('layer_name'),
+                                "verdict": 'FAKE' if lr.get('is_fake') else 'REAL',
+                                "confidence": int(lr.get('confidence', 0) * 100),
+                                "time": lr.get('processing_time', 0)
+                            }
+                            for lr in modal_response.get('layer_results', [])
+                        ],
+                        "stopped_at": modal_response.get('stopped_at_layer'),
+                        "total_time": modal_response.get('total_time', 0)
+                    },
+                    "model_metadata": {
+                        "model": "Balanced-3Layer-Pipeline-v1",
+                        "layers": 3,
+                        "weights": [0.80, 0.15, 0.05]
+                    }
                 }).eq("id", record_id).execute()
+                
+                # Store result for response formatting
+                result["detection"] = modal_response
                 
             except Exception as e:
                 print(f"⚠️ Failed to trigger video detection: {e}")
-                # Don't fail the upload, just mark as pending
-                pass
+                import traceback
+                traceback.print_exc()
+                # Mark as error in database
+                try:
+                    supabase = get_supabase_client()
+                    supabase.table("detection_history").update({
+                        "detection_result": "error",
+                        "model_metadata": {"error": str(e)}
+                    }).eq("id", record_id).execute()
+                except:
+                    pass
         
         # Reset user state after successful upload
         user_state[from_number] = None
@@ -234,11 +264,11 @@ def handle_media_message(message, from_number, user_id=None):
 
 def format_media_response(msg_type, result):
     """
-    Format response message for media uploads
+    Format response message for media uploads with detection results
     
     Args:
         msg_type (str): Message type (image, video, document)
-        result (dict): Upload result
+        result (dict): Upload result with optional detection data
     
     Returns:
         str: Formatted response message
@@ -255,10 +285,53 @@ def format_media_response(msg_type, result):
     response = f"{emoji} {type_name} uploaded successfully!\n\n"
     response += f"📁 File: {result['filename']}\n"
     response += f"📊 Type: {result['file_type']}\n"
-    response += f"💾 Size: {result['size']:,} bytes\n"
-    response += f"🔗 Bucket: {result['bucket']}\n\n"
-    response += "🔍 Analyzing for deepfakes...\n"
-    response += "⏳ This may take a moment..."
+    response += f"💾 Size: {result['size']:,} bytes\n\n"
+    
+    # Add detection results if available (for videos)
+    detection = result.get('detection')
+    if detection and not detection.get('error'):
+        verdict = detection.get('final_verdict', 'UNKNOWN')
+        confidence = detection.get('confidence', 0)
+        
+        # Verdict with emoji
+        if verdict == 'FAKE':
+            response += "🚨 *DEEPFAKE DETECTED*\n"
+            response += f"⚠️ Confidence: {confidence:.1%}\n\n"
+        else:
+            response += "✅ *AUTHENTIC VIDEO*\n"
+            response += f"✓ Confidence: {confidence:.1%}\n\n"
+        
+        # Layer breakdown
+        response += "📊 *Analysis Breakdown:*\n"
+        for lr in detection.get('layer_results', []):
+            layer_name = lr.get('layer_name', 'Unknown')
+            layer_verdict = 'FAKE' if lr.get('is_fake') else 'REAL'
+            layer_conf = lr.get('confidence', 0)
+            layer_time = lr.get('processing_time', 0)
+            
+            # Simple layer names
+            if 'Visual' in layer_name:
+                icon = "👁️"
+                name = "Visual Check"
+            elif 'Temporal' in layer_name:
+                icon = "⏱️"
+                name = "Temporal Check"
+            elif 'Audio' in layer_name:
+                icon = "🔊"
+                name = "Audio Check"
+            else:
+                icon = "🔍"
+                name = layer_name
+            
+            response += f"{icon} {name}: {layer_verdict} ({layer_conf:.0%}) [{layer_time:.1f}s]\n"
+        
+        total_time = detection.get('total_time', 0)
+        response += f"\n⏱️ Total Analysis: {total_time:.2f}s\n"
+        response += f"🤖 Model: Balanced-3Layer-Pipeline-v1"
+        
+    elif msg_type == "video":
+        response += "🔍 Analyzing for deepfakes...\n"
+        response += "⏳ This may take a moment..."
     
     return response
 

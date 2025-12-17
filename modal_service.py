@@ -5,8 +5,9 @@ import os
 import requests
 from typing import Dict, Optional
 
-# Modal API Configuration
-MODAL_VIDEO_API_URL = os.getenv("MODAL_VIDEO_API_URL", "https://your-modal-app.modal.run")  # Update after deployment
+# Modal API Configuration - Balanced 3-Layer Detection Pipeline
+# Deployed: https://modal.com/apps/blackpool25/main/deployed/deepfake-detector-balanced-3layer
+MODAL_VIDEO_API_URL = os.getenv("MODAL_VIDEO_API_URL", "https://blackpool25--deepfake-detector-balanced-3layer-detect-video.modal.run")
 MODAL_API_KEY = os.getenv("MODAL_API_KEY")  # Optional
 
 
@@ -15,51 +16,83 @@ class ModalDetectionError(Exception):
     pass
 
 
-def detect_video_multimodal(video_url: str, callback_url: Optional[str] = None, task_id: Optional[str] = None) -> Dict:
+def detect_video_multimodal(
+    video_url: str, 
+    enable_fail_fast: bool = False,
+    callback_url: Optional[str] = None, 
+    task_id: Optional[str] = None
+) -> Dict:
     """
-    Send video to Modal multimodal detection API
+    Send video to Modal balanced 3-layer deepfake detection API
     
     Args:
         video_url: Public URL to video file
-        callback_url: Optional webhook for async result callback
+        enable_fail_fast: Stop early if Layer 1 very confident (>0.8)
+        callback_url: Optional webhook for async result callback (not yet implemented)
         task_id: Optional task ID for tracking
     
     Returns:
-        dict: {
-            "task_id": str,
-            "status": str,
-            "message": str
+        dict: Detection result from balanced 3-layer pipeline
+        {
+            "video_path": str,
+            "final_verdict": str,  # "FAKE" or "REAL"
+            "confidence": float,  # 0-1 scale
+            "stopped_at_layer": str,
+            "layer_results": [
+                {
+                    "layer_name": str,
+                    "is_fake": bool,
+                    "confidence": float,
+                    "processing_time": float,
+                    "details": dict
+                }
+            ],
+            "total_time": float
         }
     
     Raises:
         ModalDetectionError: If API call fails
     """
     try:
-        endpoint = f"{MODAL_VIDEO_API_URL}/detect_video"
+        # Direct endpoint (not /detect-video suffix)
+        endpoint = MODAL_VIDEO_API_URL
         
         payload = {
             "video_url": video_url,
-            "callback_url": callback_url,
-            "task_id": task_id
+            "enable_fail_fast": enable_fail_fast
         }
         
-        headers = {}
+        headers = {"Content-Type": "application/json"}
         if MODAL_API_KEY:
             headers["Authorization"] = f"Bearer {MODAL_API_KEY}"
+        
+        print(f"[Modal Service] Calling {endpoint} with video: {video_url}")
         
         response = requests.post(
             endpoint,
             json=payload,
             headers=headers,
-            timeout=30  # Just for initiating the task
+            timeout=120  # Increased timeout for video processing
         )
         
         response.raise_for_status()
-        return response.json()
+        result = response.json()
+        
+        # Check for errors
+        if "error" in result:
+            raise ModalDetectionError(result["error"])
+        
+        print(f"[Modal Service] Detection complete: {result.get('final_verdict')} ({result.get('confidence', 0):.2%})")
+        print(f"[Modal Service] Stopped at: {result.get('stopped_at_layer')}, Total time: {result.get('total_time', 0):.2f}s")
+        
+        return result
     
+    except requests.exceptions.Timeout:
+        print(f"Modal API timeout after 120s")
+        raise ModalDetectionError("Video processing timed out. Please try a shorter video.")
     except requests.exceptions.RequestException as e:
         print(f"Modal API error: {e}")
-        raise ModalDetectionError(f"Failed to initiate video detection: {str(e)}")
+        raise ModalDetectionError(f"Failed to process video: {str(e)}")
 
 
 def check_detection_status(task_id: str) -> Dict:
