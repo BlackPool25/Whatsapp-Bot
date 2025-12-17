@@ -266,12 +266,19 @@ def handle_media_message(message, from_number, user_id=None):
                 print(f"⚠️ Failed to trigger video detection: {e}")
                 import traceback
                 traceback.print_exc()
+                
+                # Store error for response
+                result["detection"] = {
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+                
                 # Mark as error in database
                 try:
                     supabase = get_supabase_client()
                     supabase.table("detection_history").update({
                         "detection_result": "error",
-                        "model_metadata": {"error": str(e)}
+                        "model_metadata": {"error": str(e), "traceback": traceback.format_exc()}
                     }).eq("id", record_id).execute()
                 except:
                     pass
