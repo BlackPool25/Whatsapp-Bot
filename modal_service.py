@@ -137,7 +137,12 @@ def detect_image_ai(file_content: bytes, mime_type: str = "image/jpeg") -> Dict:
         mime_type: MIME type of image
     
     Returns:
-        dict: Detection result with confidence, isAI, label, model
+        dict: Detection result with predictions, top_prediction, confidence
+        {
+            "predictions": [{"label": "REAL"|"AI", "score": float}],
+            "top_prediction": "REAL"|"AI",
+            "confidence": float (0-1)
+        }
     """
     try:
         import base64
@@ -173,12 +178,31 @@ def detect_text_ai(text: str) -> Dict:
     Detect AI-generated text using Modal endpoint
     
     Args:
-        text: Text content to analyze
+        text: Text content to analyze (minimum 20 characters)
     
     Returns:
-        dict: Detection result with confidence, isAI, label, model
+        dict: Detection result
+        {
+            "success": bool,
+            "result": {
+                "prediction": "AI"|"Human"|"UNCERTAIN",
+                "is_ai": bool,
+                "confidence": float (0-1),
+                "confidence_percent": str,
+                "agreement": str
+            },
+            "error": str (if success=false)
+        }
     """
     try:
+        # Validate minimum length
+        if len(text.strip()) < 20:
+            return {
+                "success": False,
+                "error": "Text too short",
+                "detail": "Minimum 20 characters required"
+            }
+        
         url = MODAL_TEXT_API_URL
         
         payload = {

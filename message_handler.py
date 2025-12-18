@@ -62,6 +62,10 @@ def handle_text_message(from_number, text_body):
         # User has chosen text option and is now sending text to analyze
         user_state[from_number] = None  # Reset state after processing
         
+        # Validate minimum text length
+        if len(text_body.strip()) < 20:
+            return "❌ Text too short\n\nPlease send at least 20 characters for accurate analysis.\n\n" + HELP_MESSAGE
+        
         try:
             # Detect AI-generated text
             modal_response = detect_text_ai(text_body)
@@ -294,12 +298,15 @@ def handle_media_message(message, from_number, user_id=None):
                     mime_type=mime_type
                 )
                 
-                print(f"✅ Image detection complete: {modal_response.get('top_prediction')}")
+                print(f"✅ Image detection complete")
+                print(f"   Response: {modal_response}")
                 
-                # Map response to our format
-                top_pred = modal_response.get('top_prediction', '').upper()
-                is_fake = 'AI' in top_pred or 'FAKE' in top_pred
-                confidence = modal_response.get('confidence', 0.5)
+                # Map response to our format - handle different response structures
+                top_pred = (modal_response.get('top_prediction') or 
+                           modal_response.get('label') or 
+                           modal_response.get('prediction', '')).upper()
+                is_fake = 'AI' in top_pred or 'FAKE' in top_pred or 'GENERATED' in top_pred
+                confidence = modal_response.get('confidence') or modal_response.get('score', 0.5)
                 
                 # Update detection record
                 supabase = get_supabase_client()
@@ -308,7 +315,8 @@ def handle_media_message(message, from_number, user_id=None):
                     "confidence_score": int(confidence * 100),
                     "detector_scores": {
                         "predictions": modal_response.get('predictions', []),
-                        "top_prediction": modal_response.get('top_prediction')
+                        "top_prediction": modal_response.get('top_prediction') or modal_response.get('label'),
+                        "all_scores": modal_response.get('all_scores', {})
                     },
                     "model_metadata": {
                         "model": "EfficientFormer-S2V1-Image-Detector"
@@ -319,7 +327,8 @@ def handle_media_message(message, from_number, user_id=None):
                 result["detection"] = {
                     "final_verdict": "FAKE" if is_fake else "REAL",
                     "confidence": confidence,
-                    "top_prediction": modal_response.get('top_prediction')
+                    "top_prediction": top_pred,
+                    "is_ai_generated": is_fake
                 }
                 
             except ModalDetectionError as e:
@@ -333,6 +342,11 @@ def handle_media_message(message, from_number, user_id=None):
                     }).eq("id", record_id).execute()
                 except:
                     pass
+                # Store error for response formatting
+                result["detection"] = {
+                    "error": str(e),
+                    "error_type": "ModalDetectionError"
+                }
         
         # Reset user state after successful upload
         user_state[from_number] = None
@@ -436,14 +450,17 @@ def format_media_response(msg_type, result):
                 response += f"✓ Confidence: {confidence:.1%}\n\n"
             
             response += f"📊 Classification: {top_pred}\n"
-            response += f"🤖 Model: EfficientFormer-L1"
+            response += f"🤖 Model: EfficientFormer-L1\n\n"
+            
+            # Add help message
+            response += "━━━━━━━━━━━━━━━━\n"
+            response += "Type 'start' to analyze another file"
         
-    elif msg_type == "video" and not detection:
-        response += "🔍 Analyzing for deepfakes...\n"
-        response += "⏳ This may take a moment..."
-    elif msg_type == "image" and not detection:
-        response += "🔍 Analyzing for AI generation...\n"
-        response += "⏳ This may take a moment..."
+    elif detection and detection.get('error'):
+        # Handle detection errors
+        response += f"❌ *Detection Error*\n"
+        response += f"Error: {detection.get('error')[:100]}\n\n"
+        response += "Please try again or contact support."
     
     return response
 
