@@ -14,6 +14,7 @@ from storage_service import (
 )
 from modal_service import detect_video_multimodal, detect_image_ai, detect_text_ai, ModalDetectionError
 from config import WELCOME_MESSAGE, HELP_MESSAGE
+from document_extraction import extract_text_from_document, is_valid_document_for_detection
 
 
 # Track user greetings (in-memory store)
@@ -359,9 +360,113 @@ def handle_media_message(message, from_number, user_id=None):
                     "error_type": "ModalDetectionError"
                 }
         
-        # Handle document/PDF - no AI detection, just upload
-        # Documents don't get AI detection (no Modal API for PDFs yet)
-        # Just inform user that file was uploaded successfully
+        # Handle document/PDF - extract text and detect AI
+        elif file_type == 'document':
+            try:
+                print(f"📄 Extracting text from document: {unique_filename}...")
+                
+                # Extract text from document
+                extracted_text, extraction_metadata = extract_text_from_document(
+                    file_content=file_content,
+                    filename=original_filename,
+                    mime_type=mime_type
+                )
+                
+                print(f"✅ Text extracted: {extraction_metadata['char_count']} chars, {extraction_metadata['word_count']} words")
+                print(f"   Method: {extraction_metadata['extraction_method']}")
+                
+                # Validate text for AI detection
+                is_valid, validation_error = is_valid_document_for_detection(extracted_text)
+                
+                if is_valid:
+                    # Detect AI-generated text
+                    print(f"🤖 Running AI text detection...")
+                    modal_response = detect_text_ai(extracted_text)
+                    
+                    if modal_response.get('success'):
+                        ai_result = modal_response['result']
+                        prediction = ai_result['prediction']  # "AI", "Human", or "UNCERTAIN"
+                        confidence = ai_result.get('confidence', 0)
+                        is_ai = ai_result.get('is_ai', False)
+                        
+                        print(f"✅ Document AI detection complete: {prediction} ({confidence:.1%})")
+                        
+                        # Update detection record
+                        supabase = get_supabase_client()
+                        supabase.table("detection_history").update({
+                            "detection_result": "FAKE" if is_ai else "REAL",
+                            "confidence_score": int(confidence * 100),
+                            "detector_scores": {
+                                "text_extracted": True,
+                                "char_count": extraction_metadata['char_count'],
+                                "word_count": extraction_metadata['word_count'],
+                                "agreement": ai_result.get('agreement', 'N/A'),
+                                "breakdown": modal_response.get('breakdown', {})
+                            },
+                            "model_metadata": {
+                                "model": "Ensemble-AI-Detector-v3",
+                                "extraction_method": extraction_metadata['extraction_method'],
+                                "file_format": extraction_metadata['file_type']
+                            }
+                        }).eq("id", record_id).execute()
+                        
+                        # Store result for response formatting
+                        result["detection"] = {
+                            "prediction": prediction,
+                            "confidence": confidence,
+                            "is_ai": is_ai,
+                            "agreement": ai_result.get('agreement'),
+                            "breakdown": modal_response.get('breakdown', {}),
+                            "text_preview": extracted_text[:200] + "..." if len(extracted_text) > 200 else extracted_text,
+                            "extraction_metadata": extraction_metadata
+                        }
+                    else:
+                        # Detection failed
+                        result["detection"] = {
+                            "error": modal_response.get('error', 'Text detection failed'),
+                            "extraction_metadata": extraction_metadata
+                        }
+                else:
+                    # Text not suitable for detection
+                    print(f"⚠️ Document text validation failed: {validation_error}")
+                    result["detection"] = {
+                        "error": validation_error,
+                        "extraction_metadata": extraction_metadata
+                    }
+                    
+                    # Still update database with extraction info
+                    try:
+                        supabase = get_supabase_client()
+                        supabase.table("detection_history").update({
+                            "detection_result": "error",
+                            "model_metadata": {
+                                "error": validation_error,
+                                "extraction_method": extraction_metadata['extraction_method'],
+                                "char_count": extraction_metadata['char_count']
+                            }
+                        }).eq("id", record_id).execute()
+                    except:
+                        pass
+                        
+            except Exception as e:
+                print(f"⚠️ Document processing error: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # Store error
+                result["detection"] = {
+                    "error": str(e),
+                    "error_type": type(e).__name__
+                }
+                
+                try:
+                    supabase = get_supabase_client()
+                    supabase.table("detection_history").update({
+                        "detection_result": "error",
+                        "model_metadata": {"error": str(e), "traceback": traceback.format_exc()}
+                    }).eq("id", record_id).execute()
+                except:
+                    pass
         
         # Reset user state after successful upload
         user_state[from_number] = None
@@ -397,15 +502,6 @@ def format_media_response(msg_type, result):
     response += f"📁 File: {result['filename']}\n"
     response += f"📊 Type: {result['file_type']}\n"
     response += f"💾 Size: {result['size']:,} bytes\n\n"
-    
-    # Handle documents separately (no AI detection available)
-    if msg_type == "document":
-        response += "📄 *Document stored successfully*\n\n"
-        response += "ℹ️ Note: AI detection for documents/PDFs is not yet available.\n"
-        response += "Your file has been safely stored.\n\n"
-        response += "━━━━━━━━━━━━━━━━\n"
-        response += "Type 'start' to analyze another file"
-        return response
     
     # Add detection results if available
     detection = result.get('detection')
@@ -472,10 +568,50 @@ def format_media_response(msg_type, result):
             response += "━━━━━━━━━━━━━━━━\n"
             response += "Type 'start' to analyze another file"
         
+        # Handle document detection results (text extraction + AI detection)
+        elif msg_type == "document":
+            prediction = detection.get('prediction', 'UNKNOWN')
+            confidence = detection.get('confidence', 0)
+            is_ai = detection.get('is_ai', False)
+            extraction_meta = detection.get('extraction_metadata', {})
+            
+            # Verdict with emoji
+            if is_ai:
+                response += "🤖 *AI-GENERATED TEXT DETECTED*\n"
+                response += f"⚠️ Confidence: {confidence:.1%}\n\n"
+            elif prediction == "Human":
+                response += "✅ *AUTHENTIC HUMAN TEXT*\n"
+                response += f"✓ Confidence: {confidence:.1%}\n\n"
+            else:
+                response += "❓ *UNCERTAIN*\n"
+                response += f"ℹ️ Confidence: {confidence:.1%}\n\n"
+            
+            response += f"📊 Prediction: {prediction}\n"
+            response += f"🎯 Agreement: {detection.get('agreement', 'N/A')}\n"
+            response += f"📄 Extracted: {extraction_meta.get('char_count', 0):,} chars, {extraction_meta.get('word_count', 0):,} words\n"
+            response += f"🛠️ Method: {extraction_meta.get('extraction_method', 'N/A')}\n"
+            response += f"🤖 Model: Ensemble-AI-Detector-v3\n\n"
+            
+            # Show text preview
+            if detection.get('text_preview'):
+                preview = detection['text_preview']
+                response += f"📝 *Preview:*\n{preview}\n\n"
+            
+            # Add help message
+            response += "━━━━━━━━━━━━━━━━\n"
+            response += "Type 'start' to analyze another file"
+        
     elif detection and detection.get('error'):
         # Handle detection errors
         response += f"❌ *Detection Error*\n"
         response += f"Error: {detection.get('error')[:100]}\n\n"
+        
+        # Show extraction metadata if available (for documents)
+        extraction_meta = detection.get('extraction_metadata')
+        if extraction_meta and extraction_meta.get('success'):
+            response += f"📄 Text extraction: ✅ Success\n"
+            response += f"   {extraction_meta.get('char_count', 0):,} chars extracted\n\n"
+        
         response += "Please try again or contact support."
     
     return response
