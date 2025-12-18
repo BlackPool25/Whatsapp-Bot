@@ -221,6 +221,17 @@ def handle_media_message(message, from_number, user_id=None):
         
         record_id = detection_record.get("id")
         
+        # Initialize result dictionary for storing detection data
+        result = {
+            "file_url": file_url,
+            "filename": unique_filename,
+            "file_type": file_type,
+            "bucket": bucket_name,
+            "size": file_size,
+            "record_id": record_id,
+            "msg_type": msg_type
+        }
+        
         # Trigger Modal video detection for videos
         if file_type == 'video':
             try:
@@ -348,18 +359,14 @@ def handle_media_message(message, from_number, user_id=None):
                     "error_type": "ModalDetectionError"
                 }
         
+        # Handle document/PDF - no AI detection, just upload
+        # Documents don't get AI detection (no Modal API for PDFs yet)
+        # Just inform user that file was uploaded successfully
+        
         # Reset user state after successful upload
         user_state[from_number] = None
         
-        return True, {
-            "file_url": file_url,
-            "filename": unique_filename,
-            "file_type": file_type,
-            "bucket": bucket_name,
-            "size": file_size,
-            "record_id": record_id,
-            "msg_type": msg_type
-        }
+        return True, result
     
     except Exception as e:
         print(f"Error in handle_media_message: {e}")
@@ -390,6 +397,15 @@ def format_media_response(msg_type, result):
     response += f"📁 File: {result['filename']}\n"
     response += f"📊 Type: {result['file_type']}\n"
     response += f"💾 Size: {result['size']:,} bytes\n\n"
+    
+    # Handle documents separately (no AI detection available)
+    if msg_type == "document":
+        response += "📄 *Document stored successfully*\n\n"
+        response += "ℹ️ Note: AI detection for documents/PDFs is not yet available.\n"
+        response += "Your file has been safely stored.\n\n"
+        response += "━━━━━━━━━━━━━━━━\n"
+        response += "Type 'start' to analyze another file"
+        return response
     
     # Add detection results if available
     detection = result.get('detection')
@@ -450,7 +466,7 @@ def format_media_response(msg_type, result):
                 response += f"✓ Confidence: {confidence:.1%}\n\n"
             
             response += f"📊 Classification: {top_pred}\n"
-            response += f"🤖 Model: EfficientFormer-L1\n\n"
+            response += f"🤖 Model: EfficientFormer-S2V1\n\n"
             
             # Add help message
             response += "━━━━━━━━━━━━━━━━\n"
