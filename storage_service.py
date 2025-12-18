@@ -168,38 +168,51 @@ def store_detection_history(user_id, session_id, file_url, filename, file_type,
     """
     try:
         client = get_supabase_client()
+        
+        # Ensure required fields have values (database has NOT NULL constraints)
         data = {
-            "user_id": user_id,
             "session_id": session_id,
-            "file_url": file_url,
             "filename": filename,
             "file_type": file_type,
-            "file_size": file_size,
+            "file_size": int(file_size),  # Ensure it's an integer
             "file_extension": file_extension,
-            "detection_result": detection_result or "pending",  # Default to "pending" if not provided
-            "confidence_score": confidence_score if confidence_score is not None else 0.0,  # Default to 0.0 if not provided
-            "is_file_available": True,
-            "created_at": datetime.utcnow().isoformat()
+            "detection_result": detection_result if detection_result else "pending",
+            "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
         }
+        
+        # Add optional fields only if they have values
+        if user_id:
+            data["user_id"] = user_id
+        if file_url:
+            data["file_url"] = file_url
+        
+        # is_file_available defaults to true in database, but we can override
+        data["is_file_available"] = True
         
         print(f"💾 Storing metadata in detection_history table...")
         print(f"   File: {filename}")
         print(f"   Type: {file_type}")
         print(f"   Extension: {file_extension}")
+        print(f"   Detection result: {data['detection_result']}")
+        print(f"   Confidence: {data['confidence_score']}")
+        
+        print(f"   Data to insert: {data}")
         
         response = client.table("detection_history").insert(data).execute()
         
-        if response.data:
+        if response.data and len(response.data) > 0:
             print(f"✅ Metadata stored successfully! Record ID: {response.data[0].get('id')}")
             return response.data[0]
         else:
             print(f"⚠️ No data returned from insert operation")
+            print(f"   Response: {response}")
             return None
     
     except Exception as e:
         error_str = str(e)
         print(f"❌ Error storing detection history: {e}")
         print(f"   Error type: {type(e).__name__}")
+        print(f"   Data attempted: {data if 'data' in locals() else 'N/A'}")
         
         # Check for NOT NULL constraint violations
         if "not-null constraint" in error_str.lower() or "23502" in error_str:

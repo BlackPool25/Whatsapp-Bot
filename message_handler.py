@@ -207,12 +207,17 @@ def handle_media_message(message, from_number, user_id=None):
         
         # Store metadata in database
         file_size = len(file_content)
+        
+        # Map file_type to database-compatible value
+        # Database CHECK constraint only allows: 'text', 'image', 'video'
+        db_file_type = 'text' if file_type == 'document' else file_type
+        
         detection_record = store_detection_history(
             user_id=user_id,
             session_id=session_id,
             file_url=file_url,
             filename=unique_filename,
-            file_type=file_type,
+            file_type=db_file_type,  # Use mapped value for database
             file_size=file_size,
             file_extension=extension or 'unknown'
         )
